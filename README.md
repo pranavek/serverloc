@@ -13,3 +13,4 @@ A simple, minimal website to check the server location, IP address, and ISP of a
 2. **ipapi.co**: `https://ipapi.co/json/` - Provides Geolocation data for the IP.
 3. **REST Countries**: `https://restcountries.com/` - Finds bordering countries for suggestions.
 
+

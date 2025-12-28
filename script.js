@@ -1,42 +1,54 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const searchBtn = document.getElementById('searchBtn');
-    const luckyBtn = document.getElementById('luckyBtn');
-    const urlInput = document.getElementById('urlInput');
-    const resultsDiv = document.getElementById('results');
-    const loadingDiv = document.getElementById('loading');
-    const errorDiv = document.getElementById('error');
+$(document).ready(function () {
+    const $searchBtn = $('#searchBtn');
+    const $luckyBtn = $('#luckyBtn'); // Assuming this exists in HTML though not in the snippet I saw earlier, wait - I saw luckyBtn in original script line 3 but not in index.html?
+    // Ah, lines 23 in index.html only shows searchBtn. Line 3 of script.js referenced luckyBtn.
+    // I will keep the luckyBtn code if checking for existence, or just include it as implied it might be there or added later.
+    // Actually, looking at index.html (step 5), I don't see an element with id="luckyBtn". 
+    // It seems the original script had a luckyBtn logic but the HTML didn't have the button? 
+    // Wait, let's re-read index.html.
+    // Line 23: <button id="searchBtn">Find Server Location</button>
+    // No luckyBtn.
+    // I will verify if I should keep the luckyBtn logic. The prompt is "convert script.js to use jquery". I should probably keep the logic but translated, in case the user adds the button later, or maybe I missed it.
+    // Let's re-read the script.js I read in step 4. lines 3 and 24-29 reference luckyBtn.
+    // I'll keep the logic but convert it.
 
-    // UI Elements to update
+    const $urlInput = $('#urlInput');
+    const $resultsDiv = $('#results');
+    const $loadingDiv = $('#loading');
+    const $errorDiv = $('#error');
+
+    // UI Elements
     const ui = {
-        ip: document.getElementById('ipAddress'),
-        country: document.getElementById('country'),
-        city: document.getElementById('city'),
-        region: document.getElementById('region'),
-        isp: document.getElementById('isp'),
-        nearbyList: document.getElementById('nearbyList')
+        $ip: $('#ipAddress'),
+        $country: $('#country'),
+        $city: $('#city'),
+        $region: $('#region'),
+        $isp: $('#isp'),
+        $nearbyList: $('#nearbyList')
     };
 
-    searchBtn.addEventListener('click', handleSearch);
-    urlInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') handleSearch();
+    $searchBtn.on('click', handleSearch);
+    $urlInput.on('keypress', function (e) {
+        if (e.which === 13) handleSearch();
     });
 
-    luckyBtn.addEventListener('click', () => {
+    // Determine if luckyBtn exists before attaching event to avoid errors if strict
+    // but jQuery handles missing elements gracefully (does nothing).
+    $('#luckyBtn').on('click', function () {
         const funSites = ['google.com', 'wikipedia.org', 'bbc.com', 'cnn.com', 'github.com'];
         const randomSite = funSites[Math.floor(Math.random() * funSites.length)];
-        urlInput.value = randomSite;
+        $urlInput.val(randomSite);
         handleSearch();
     });
 
     async function handleSearch() {
         // Reset UI
-        resultsDiv.classList.add('hidden');
-        errorDiv.classList.add('hidden');
-        errorDiv.textContent = '';
-        loadingDiv.classList.remove('hidden');
-        ui.nearbyList.innerHTML = ''; // Clear previous suggestions
+        $resultsDiv.addClass('hidden');
+        $errorDiv.addClass('hidden').text('');
+        $loadingDiv.removeClass('hidden');
+        ui.$nearbyList.empty(); // Clear previous suggestions
 
-        const rawInput = urlInput.value.trim();
+        const rawInput = $urlInput.val().trim();
         if (!rawInput) {
             showError("Please enter a URL.");
             return;
@@ -57,12 +69,12 @@ document.addEventListener('DOMContentLoaded', () => {
             updateResultUI(ip, locationData);
 
             // 4. Get Nearby Countries (Borders)
-            if (locationData.country_code) { // ipapi.co returns 2-letter code usually, but let's check
-                await fetchAndDisplayNearby(locationData.country_code); // ipapi sometimes uses country, sometimes country_code
+            if (locationData.country_code) {
+                await fetchAndDisplayNearby(locationData.country_code);
             }
 
-            loadingDiv.classList.add('hidden');
-            resultsDiv.classList.remove('hidden');
+            $loadingDiv.addClass('hidden');
+            $resultsDiv.removeClass('hidden');
 
         } catch (err) {
             showError(err.message);
@@ -71,86 +83,90 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function extractHostname(url) {
         let hostname;
-        // Find & remove protocol (http, ftp, etc.) and get hostname
         if (url.indexOf("//") > -1) {
             hostname = url.split('/')[2];
         } else {
             hostname = url.split('/')[0];
         }
-        // Find & remove port number
         hostname = hostname.split(':')[0];
-        // Find & remove "?"
         hostname = hostname.split('?')[0];
-
         return hostname;
     }
 
-    async function resolveDns(domain) {
-        // specific to IPv4 (type A record = 1)
-        const response = await fetch(`https://dns.google/resolve?name=${domain}&type=A`);
-        const data = await response.json();
-
-        if (data.Status !== 0 || !data.Answer) {
-            return null;
-        }
-
-        // Return the first A record data (IP address)
-        const record = data.Answer.find(ans => ans.type === 1);
-        return record ? record.data : null;
+    function resolveDns(domain) {
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: `https://dns.google/resolve`,
+                data: { name: domain, type: 'A' },
+                dataType: 'json',
+                success: function (data) {
+                    if (data.Status !== 0 || !data.Answer) {
+                        resolve(null);
+                        return;
+                    }
+                    const record = data.Answer.find(ans => ans.type === 1);
+                    resolve(record ? record.data : null);
+                },
+                error: function () {
+                    // Start of the error handling, previously allowed network errors to propagate or return null?
+                    // Original code: await fetch -> if network error, throws.
+                    // So we should probably reject or resolve null.
+                    // Original code caught errors in handleSearch.
+                    // Let's reject to be consistent with await fetch throwing.
+                    reject(new Error("DNS resolution failed"));
+                }
+            });
+        });
     }
 
-    async function fetchLocation(ip) {
-        const response = await fetch(`https://ipapi.co/${ip}/json/`);
-        if (!response.ok) throw new Error("GeoIP service unavailable.");
-        return await response.json();
+    function fetchLocation(ip) {
+        return $.ajax({
+            url: `https://ipapi.co/${ip}/json/`,
+            dataType: 'json'
+        }).fail(function () {
+            throw new Error("GeoIP service unavailable.");
+        });
     }
 
-    async function fetchAndDisplayNearby(countryCode) {
-        try {
-            // First get the country details to find border codes
-            // ipapi.co provides A 2-letter ISO code. restcountries supports 2 or 3 letter lookup.
-            const countryRes = await fetch(`https://restcountries.com/v3.1/alpha/${countryCode}`);
-            if (!countryRes.ok) return; // Fail silently for suggestions
-
-            const countryData = await countryRes.json();
+    function fetchAndDisplayNearby(countryCode) {
+        // Using return promise to await in handleSearch
+        return $.ajax({
+            url: `https://restcountries.com/v3.1/alpha/${countryCode}`,
+            dataType: 'json'
+        }).then(function (countryData) {
             const country = countryData[0];
 
             if (!country.borders || country.borders.length === 0) {
-                const li = document.createElement('li');
-                li.textContent = "No bordering countries found (Island nation?)";
-                ui.nearbyList.appendChild(li);
+                $('<li>').text("No bordering countries found (Island nation?)").appendTo(ui.$nearbyList);
                 return;
             }
 
-            // Now resolve the border codes (3-letter) to full names
             const borders = country.borders.join(',');
-            const neighborsRes = await fetch(`https://restcountries.com/v3.1/alpha?codes=${borders}`);
-            const neighborsData = await neighborsRes.json();
-
-            // Populate list
-            neighborsData.forEach(neighbor => {
-                const li = document.createElement('li');
-                li.textContent = neighbor.name.common; // + " " + neighbor.flag;
-                ui.nearbyList.appendChild(li);
+            return $.ajax({
+                url: `https://restcountries.com/v3.1/alpha`,
+                data: { codes: borders },
+                dataType: 'json'
+            }).then(function (neighborsData) {
+                neighborsData.forEach(neighbor => {
+                    $('<li>').text(neighbor.name.common).appendTo(ui.$nearbyList);
+                });
             });
 
-        } catch (e) {
+        }).catch(function (e) {
             console.error("Error fetching neighbors:", e);
-            // Optionally append a "Could not load suggestions" message
-        }
+        });
     }
 
     function updateResultUI(ip, data) {
-        ui.ip.textContent = ip;
-        ui.country.textContent = data.country_name || data.country;
-        ui.city.textContent = data.city;
-        ui.region.textContent = data.region;
-        ui.isp.textContent = data.org || data.isp;
+        ui.$ip.text(ip);
+        ui.$country.text(data.country_name || data.country);
+        ui.$city.text(data.city);
+        ui.$region.text(data.region);
+        ui.$isp.text(data.org || data.isp);
     }
 
     function showError(msg) {
-        loadingDiv.classList.add('hidden');
-        errorDiv.classList.remove('hidden');
-        errorDiv.textContent = msg;
+        $loadingDiv.addClass('hidden');
+        $errorDiv.removeClass('hidden').text(msg);
     }
 });
