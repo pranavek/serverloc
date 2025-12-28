@@ -1,21 +1,21 @@
 $(document).ready(function () {
     const $searchBtn = $('#searchBtn');
-    const $luckyBtn = $('#luckyBtn'); // Assuming this exists in HTML though not in the snippet I saw earlier, wait - I saw luckyBtn in original script line 3 but not in index.html?
-    // Ah, lines 23 in index.html only shows searchBtn. Line 3 of script.js referenced luckyBtn.
-    // I will keep the luckyBtn code if checking for existence, or just include it as implied it might be there or added later.
-    // Actually, looking at index.html (step 5), I don't see an element with id="luckyBtn". 
-    // It seems the original script had a luckyBtn logic but the HTML didn't have the button? 
-    // Wait, let's re-read index.html.
-    // Line 23: <button id="searchBtn">Find Server Location</button>
-    // No luckyBtn.
-    // I will verify if I should keep the luckyBtn logic. The prompt is "convert script.js to use jquery". I should probably keep the logic but translated, in case the user adds the button later, or maybe I missed it.
-    // Let's re-read the script.js I read in step 4. lines 3 and 24-29 reference luckyBtn.
-    // I'll keep the logic but convert it.
-
+    const $luckyBtn = $('#luckyBtn');
     const $urlInput = $('#urlInput');
     const $resultsDiv = $('#results');
     const $loadingDiv = $('#loading');
     const $errorDiv = $('#error');
+
+    // Video Results UI
+    const $videoResultsDiv = $('#videoResults');
+    const videoUi = {
+        $url: $('#videoUrl'),
+        $ip: $('#videoIp'),
+        $country: $('#videoCountry'),
+        $city: $('#videoCity'),
+        $region: $('#videoRegion'),
+        $isp: $('#videoIsp')
+    };
 
     // UI Elements
     const ui = {
@@ -32,21 +32,13 @@ $(document).ready(function () {
         if (e.which === 13) handleSearch();
     });
 
-    // Determine if luckyBtn exists before attaching event to avoid errors if strict
-    // but jQuery handles missing elements gracefully (does nothing).
-    $('#luckyBtn').on('click', function () {
-        const funSites = ['google.com', 'wikipedia.org', 'bbc.com', 'cnn.com', 'github.com'];
-        const randomSite = funSites[Math.floor(Math.random() * funSites.length)];
-        $urlInput.val(randomSite);
-        handleSearch();
-    });
-
     async function handleSearch() {
         // Reset UI
         $resultsDiv.addClass('hidden');
+        $videoResultsDiv.addClass('hidden');
         $errorDiv.addClass('hidden').text('');
         $loadingDiv.removeClass('hidden');
-        ui.$nearbyList.empty(); // Clear previous suggestions
+        ui.$nearbyList.empty();
 
         const rawInput = $urlInput.val().trim();
         if (!rawInput) {
@@ -55,30 +47,97 @@ $(document).ready(function () {
         }
 
         try {
+            // Ensure input has protocol for fetching
+            let urlToFetch = rawInput;
+            if (!urlToFetch.match(/^http/)) {
+                urlToFetch = 'http://' + urlToFetch;
+            }
+
             const domain = extractHostname(rawInput);
 
-            // 1. Resolve DNS
+            // Parallel start: 
+            // 1. Main Domain Location (original logic)
+            // 2. Video Detection (new logic)
+
+            // We can wait for both, or just await main sequentially then video.
+            // Let's do main first to show results fast, then video.
+
+            // --- 1. Main Domain Logic ---
             const ip = await resolveDns(domain);
             if (!ip) throw new Error("Could not resolve IP address for this domain.");
 
-            // 2. Get Location
             const locationData = await fetchLocation(ip);
             if (locationData.error) throw new Error("Location lookup failed: " + locationData.reason);
 
-            // 3. Update Basic UI
             updateResultUI(ip, locationData);
 
-            // 4. Get Nearby Countries (Borders)
             if (locationData.country_code) {
                 await fetchAndDisplayNearby(locationData.country_code);
             }
 
+            $resultsDiv.removeClass('hidden'); // Show main results immediately
+
+            // --- 2. Video Detection Logic ---
+            try {
+                // Fetch page content via proxy to find video sources
+                const videoHostname = await findVideoHostname(urlToFetch);
+                if (videoHostname) {
+                    const videoIp = await resolveDns(videoHostname);
+                    if (videoIp) {
+                        const videoLocData = await fetchLocation(videoIp);
+                        updateVideoResultUI(videoHostname, videoIp, videoLocData);
+                        $videoResultsDiv.removeClass('hidden');
+                    }
+                }
+            } catch (videoErr) {
+                console.warn("Video detection failed:", videoErr);
+                // Fail silently for video part, don't break main flow
+            }
+
             $loadingDiv.addClass('hidden');
-            $resultsDiv.removeClass('hidden');
 
         } catch (err) {
             showError(err.message);
         }
+    }
+
+    async function findVideoHostname(url) {
+        // Use AllOrigins proxy to bypass CORS
+        const response = await $.getJSON(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+        if (!response.contents) return null;
+
+        const html = response.contents;
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        // Strategy 1: Look for <video> src
+        let src = "";
+        const video = doc.querySelector('video');
+        if (video) {
+            if (video.src) src = video.src;
+            else {
+                const source = video.querySelector('source');
+                if (source && source.src) src = source.src;
+            }
+        }
+
+        // Strategy 2: Look for <iframe> src if it looks like a video provider (youtube, vimeo)
+        // or just the first iframe? "From that video is getting streamed" implies we find THE video.
+        if (!src) {
+            const iframes = doc.querySelectorAll('iframe');
+            for (let i = 0; i < iframes.length; i++) {
+                const fSrc = iframes[i].src;
+                if (fSrc && (fSrc.includes('youtube') || fSrc.includes('vimeo') || fSrc.includes('player') || fSrc.includes('stream'))) {
+                    src = fSrc;
+                    break;
+                }
+            }
+        }
+
+        if (src) {
+            return extractHostname(src);
+        }
+        return null;
     }
 
     function extractHostname(url) {
@@ -108,12 +167,7 @@ $(document).ready(function () {
                     resolve(record ? record.data : null);
                 },
                 error: function () {
-                    // Start of the error handling, previously allowed network errors to propagate or return null?
-                    // Original code: await fetch -> if network error, throws.
-                    // So we should probably reject or resolve null.
-                    // Original code caught errors in handleSearch.
-                    // Let's reject to be consistent with await fetch throwing.
-                    reject(new Error("DNS resolution failed"));
+                    resolve(null); // Resolve null instead of reject for smoother flow
                 }
             });
         });
@@ -129,7 +183,6 @@ $(document).ready(function () {
     }
 
     function fetchAndDisplayNearby(countryCode) {
-        // Using return promise to await in handleSearch
         return $.ajax({
             url: `https://restcountries.com/v3.1/alpha/${countryCode}`,
             dataType: 'json'
@@ -137,7 +190,11 @@ $(document).ready(function () {
             const country = countryData[0];
 
             if (!country.borders || country.borders.length === 0) {
-                $('<li>').text("No bordering countries found (Island nation?)").appendTo(ui.$nearbyList);
+                // Only modify if we are still active? 
+                // jQuery appends are safe.
+                if (ui.$nearbyList.is(':empty')) {
+                    $('<li>').text("No bordering countries found (Island nation?)").appendTo(ui.$nearbyList);
+                }
                 return;
             }
 
@@ -163,6 +220,15 @@ $(document).ready(function () {
         ui.$city.text(data.city);
         ui.$region.text(data.region);
         ui.$isp.text(data.org || data.isp);
+    }
+
+    function updateVideoResultUI(hostname, ip, data) {
+        videoUi.$url.text(hostname);
+        videoUi.$ip.text(ip);
+        videoUi.$country.text(data.country_name || data.country);
+        videoUi.$city.text(data.city);
+        videoUi.$region.text(data.region);
+        videoUi.$isp.text(data.org || data.isp);
     }
 
     function showError(msg) {
