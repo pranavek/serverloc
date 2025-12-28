@@ -102,51 +102,58 @@ $(document).ready(function () {
     }
 
     async function findVideoHostname(url) {
-        // Use AllOrigins proxy to bypass CORS
-        const response = await $.getJSON(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
-        if (!response.contents) return null;
+        try {
+            const html = await $.ajax({
+                url: `https://corsproxy.io/?` + encodeURIComponent(url),
+                dataType: 'text'
+            });
 
-        const html = response.contents;
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, "text/html");
+            if (!html) return null;
 
-        // Strategy 1: Look for <video> src
-        let src = "";
-        const video = doc.querySelector('video');
-        if (video) {
-            if (video.src) src = video.src;
-            else {
-                const source = video.querySelector('source');
-                if (source && source.src) src = source.src;
-            }
-        }
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
 
-        // Strategy 2: Look for <iframe> src if it looks like a video provider (youtube, vimeo)
-        // or just the first iframe? "From that video is getting streamed" implies we find THE video.
-        if (!src) {
-            const iframes = doc.querySelectorAll('iframe');
-            for (let i = 0; i < iframes.length; i++) {
-                const iframe = iframes[i];
-                const fSrc = iframe.src;
-
-                // Heuristic 1: explicitly has 'allowfullscreen' attribute (very common for players)
-                if (fSrc && iframe.hasAttribute('allowfullscreen')) {
-                    src = fSrc;
-                    break;
-                }
-
-                // Heuristic 2: URL contains common video terms
-                if (fSrc && (fSrc.includes('youtube') || fSrc.includes('vimeo') || fSrc.includes('player') || fSrc.includes('stream') || fSrc.includes('embed') || fSrc.includes('watch'))) {
-                    src = fSrc;
-                    break;
+            // Strategy 1: Look for <video> src
+            let src = "";
+            const video = doc.querySelector('video');
+            if (video) {
+                if (video.src) src = video.src;
+                else {
+                    const source = video.querySelector('source');
+                    if (source && source.src) src = source.src;
                 }
             }
-        }
 
-        if (src) {
-            return extractHostname(src);
+            // Strategy 2: Look for <iframe> src if it looks like a video provider (youtube, vimeo)
+            // or just the first iframe? "From that video is getting streamed" implies we find THE video.
+            if (!src) {
+                const iframes = doc.querySelectorAll('iframe');
+                for (let i = 0; i < iframes.length; i++) {
+                    const iframe = iframes[i];
+                    const fSrc = iframe.src;
+
+                    // Heuristic 1: explicitly has 'allowfullscreen' attribute (very common for players)
+                    if (fSrc && iframe.hasAttribute('allowfullscreen')) {
+                        src = fSrc;
+                        break;
+                    }
+
+                    // Heuristic 2: URL contains common video terms
+                    if (fSrc && (fSrc.includes('youtube') || fSrc.includes('vimeo') || fSrc.includes('player') || fSrc.includes('stream') || fSrc.includes('embed') || fSrc.includes('watch'))) {
+                        src = fSrc;
+                        break;
+                    }
+                }
+            }
+
+            if (src) {
+                return extractHostname(src);
+            }
+            return null;
+        } catch (e) {
+            console.warn("Proxy fetch failed", e);
+            return null;
         }
-        return null;
     }
 
     function extractHostname(url) {
