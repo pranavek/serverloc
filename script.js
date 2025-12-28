@@ -126,8 +126,17 @@ $(document).ready(function () {
         if (!src) {
             const iframes = doc.querySelectorAll('iframe');
             for (let i = 0; i < iframes.length; i++) {
-                const fSrc = iframes[i].src;
-                if (fSrc && (fSrc.includes('youtube') || fSrc.includes('vimeo') || fSrc.includes('player') || fSrc.includes('stream'))) {
+                const iframe = iframes[i];
+                const fSrc = iframe.src;
+
+                // Heuristic 1: explicitly has 'allowfullscreen' attribute (very common for players)
+                if (fSrc && iframe.hasAttribute('allowfullscreen')) {
+                    src = fSrc;
+                    break;
+                }
+
+                // Heuristic 2: URL contains common video terms
+                if (fSrc && (fSrc.includes('youtube') || fSrc.includes('vimeo') || fSrc.includes('player') || fSrc.includes('stream') || fSrc.includes('embed') || fSrc.includes('watch'))) {
                     src = fSrc;
                     break;
                 }
