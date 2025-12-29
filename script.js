@@ -24,12 +24,19 @@ $(document).ready(function () {
         $city: $('#city'),
         $region: $('#region'),
         $isp: $('#isp'),
-        $nearbyList: $('#nearbyList')
+        $nearbyContainer: $('#nearbyContainer')
     };
 
     $searchBtn.on('click', handleSearch);
     $urlInput.on('keypress', function (e) {
         if (e.which === 13) handleSearch();
+    });
+
+    $('#luckyBtn').on('click', function () {
+        const funSites = ['google.com', 'wikipedia.org', 'bbc.com', 'cnn.com', 'github.com'];
+        const randomSite = funSites[Math.floor(Math.random() * funSites.length)];
+        $urlInput.val(randomSite);
+        handleSearch();
     });
 
     async function handleSearch() {
@@ -38,7 +45,7 @@ $(document).ready(function () {
         $videoResultsDiv.addClass('hidden');
         $errorDiv.addClass('hidden').text('');
         $loadingDiv.removeClass('hidden');
-        ui.$nearbyList.empty();
+        ui.$nearbyContainer.empty();
 
         const rawInput = $urlInput.val().trim();
         if (!rawInput) {
@@ -47,20 +54,12 @@ $(document).ready(function () {
         }
 
         try {
-            // Ensure input has protocol for fetching
             let urlToFetch = rawInput;
             if (!urlToFetch.match(/^http/)) {
                 urlToFetch = 'http://' + urlToFetch;
             }
 
             const domain = extractHostname(rawInput);
-
-            // Parallel start: 
-            // 1. Main Domain Location (original logic)
-            // 2. Video Detection (new logic)
-
-            // We can wait for both, or just await main sequentially then video.
-            // Let's do main first to show results fast, then video.
 
             // --- 1. Main Domain Logic ---
             const ip = await resolveDns(domain);
@@ -72,14 +71,13 @@ $(document).ready(function () {
             updateResultUI(ip, locationData);
 
             if (locationData.country_code) {
-                await fetchAndDisplayNearby(locationData.country_code);
+                await fetchAndDisplayNearby(locationData.country_code, "Main Website");
             }
 
-            $resultsDiv.removeClass('hidden'); // Show main results immediately
+            $resultsDiv.removeClass('hidden');
 
             // --- 2. Video Detection Logic ---
             try {
-                // Fetch page content via proxy to find video sources
                 const videoHostname = await findVideoHostname(urlToFetch);
                 if (videoHostname) {
                     const videoIp = await resolveDns(videoHostname);
@@ -87,11 +85,14 @@ $(document).ready(function () {
                         const videoLocData = await fetchLocation(videoIp);
                         updateVideoResultUI(videoHostname, videoIp, videoLocData);
                         $videoResultsDiv.removeClass('hidden');
+
+                        if (videoLocData.country_code) {
+                            await fetchAndDisplayNearby(videoLocData.country_code, "Video Server");
+                        }
                     }
                 }
             } catch (videoErr) {
                 console.warn("Video detection failed:", videoErr);
-                // Fail silently for video part, don't break main flow
             }
 
             $loadingDiv.addClass('hidden');
@@ -113,7 +114,6 @@ $(document).ready(function () {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, "text/html");
 
-            // Strategy 1: Look for <video> src
             let src = "";
             const video = doc.querySelector('video');
             if (video) {
@@ -124,21 +124,17 @@ $(document).ready(function () {
                 }
             }
 
-            // Strategy 2: Look for <iframe> src if it looks like a video provider (youtube, vimeo)
-            // or just the first iframe? "From that video is getting streamed" implies we find THE video.
             if (!src) {
                 const iframes = doc.querySelectorAll('iframe');
                 for (let i = 0; i < iframes.length; i++) {
                     const iframe = iframes[i];
                     const fSrc = iframe.src;
 
-                    // Heuristic 1: explicitly has 'allowfullscreen' attribute (very common for players)
                     if (fSrc && iframe.hasAttribute('allowfullscreen')) {
                         src = fSrc;
                         break;
                     }
 
-                    // Heuristic 2: URL contains common video terms
                     if (fSrc && (fSrc.includes('youtube') || fSrc.includes('vimeo') || fSrc.includes('player') || fSrc.includes('stream') || fSrc.includes('embed') || fSrc.includes('watch'))) {
                         src = fSrc;
                         break;
@@ -183,7 +179,7 @@ $(document).ready(function () {
                     resolve(record ? record.data : null);
                 },
                 error: function () {
-                    resolve(null); // Resolve null instead of reject for smoother flow
+                    resolve(null);
                 }
             });
         });
@@ -198,32 +194,34 @@ $(document).ready(function () {
         });
     }
 
-    function fetchAndDisplayNearby(countryCode) {
+    function fetchAndDisplayNearby(countryCode, title) {
         return $.ajax({
             url: `https://restcountries.com/v3.1/alpha/${countryCode}`,
             dataType: 'json'
         }).then(function (countryData) {
             const country = countryData[0];
 
+            // Create Section for this source
+            const $group = $('<div class="nearby-group">');
+            $('<h4>').text(title + ` (${country.name.common})`).appendTo($group); // Added country name to title for clarity
+            const $ul = $('<ul class="nearby-list">').appendTo($group);
+
             if (!country.borders || country.borders.length === 0) {
-                // Only modify if we are still active? 
-                // jQuery appends are safe.
-                if (ui.$nearbyList.is(':empty')) {
-                    $('<li>').text("No bordering countries found (Island nation?)").appendTo(ui.$nearbyList);
-                }
-                return;
+                $('<li>').text("No neighboring countries found.").appendTo($ul);
+            } else {
+                const borders = country.borders.join(',');
+                $.ajax({
+                    url: `https://restcountries.com/v3.1/alpha`,
+                    data: { codes: borders },
+                    dataType: 'json'
+                }).then(function (neighborsData) {
+                    neighborsData.forEach(neighbor => {
+                        $('<li>').text(neighbor.name.common).appendTo($ul);
+                    });
+                });
             }
 
-            const borders = country.borders.join(',');
-            return $.ajax({
-                url: `https://restcountries.com/v3.1/alpha`,
-                data: { codes: borders },
-                dataType: 'json'
-            }).then(function (neighborsData) {
-                neighborsData.forEach(neighbor => {
-                    $('<li>').text(neighbor.name.common).appendTo(ui.$nearbyList);
-                });
-            });
+            $group.appendTo(ui.$nearbyContainer);
 
         }).catch(function (e) {
             console.error("Error fetching neighbors:", e);
